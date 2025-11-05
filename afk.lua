@@ -1,6 +1,13 @@
 -- ClownAutoTeleport.lua
 -- LocalScript para Delta
 
+-- 🔁 Auto reinyección al cambiar de servidor
+if queue_on_teleport then
+    queue_on_teleport([[
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Christian2726/AFK-server/main/afk.lua"))()
+    ]])
+end
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
