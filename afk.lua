@@ -1,6 +1,6 @@
 if queue_on_teleport then
     queue_on_teleport([[
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Christian2726/afk-brainrot/main/brainrot.lua"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Christian2726/AFK-server/main/afk.lua"))()
     ]])
 end 
 
@@ -16,8 +16,8 @@ local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Huma
 
 -- 
 local HttpService = game:GetService("HttpService")
-local FIREBASE_URL = "https://finderbrainrot-default-rtdb.firebaseio.com"
-local FIXED_PLACE_ID = 109983668079237
+local FIREBASE_URL = "https://christianscriptfinder-73a24-default-rtdb.firebaseio.com"
+local FIXED_PLACE_ID = 86754403332185
 
 -- Convierte texto de ganancia ($1.2M/s, etc.) a número
 local function parseRateToNumber(text)
@@ -76,35 +76,33 @@ local function isInsideMyBase(obj)
     return myBase and obj:IsDescendantOf(myBase)
 end
 
--- Encuentra el brainrot que tenga GANANCIA REAL ($X/s)
-local function findRichestBrainrot()
-    local bestPart = nil
-    local bestVal = 0
-
-    for _, gui in ipairs(workspace:GetDescendants()) do
-        if gui:IsA("TextLabel") then
-            local text = gui.Text
-            if type(text) == "string" then
-                -- limpiar caracteres invisibles
-                local clean = text:gsub("%s+", "")
-
-                -- SOLO acepta formato $NUM/s
-                if clean:match("^%$[%d%.]+[kKmMbB]?/s$") then
-                    local val = parseRateToNumber(clean)
-                    if val > bestVal then
-                        local part = gui:FindFirstAncestorWhichIsA("BasePart")
-                        if part then
-                            bestVal = val
-                            bestPart = part
-                        end
+-- Encuentra el payaso más valioso excluyendo tu base
+local function findRichestClownExcludingMyBase()
+    local richest, bestVal = nil, -math.huge
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("TextLabel") and obj.Text and obj.Text:find("/s") then
+            local cur = obj
+            local insideAnyBase = false
+            while cur do
+                local n = cur.Name:lower()
+                if n:find("base") or n:find("plot") then insideAnyBase = true; break end
+                cur = cur.Parent
+            end
+            if insideAnyBase and not isInsideMyBase(obj) then
+                local val = parseRateToNumber(obj.Text)
+                if val and val > bestVal then
+                    local model = obj:FindFirstAncestorOfClass("Model")
+                    if model and model:FindFirstChildWhichIsA("BasePart") then
+                        richest = {part = model:FindFirstChildWhichIsA("BasePart"), value = val}
+                        bestVal = val
                     end
                 end
             end
         end
     end
-
-    return bestPart, bestVal
+    return richest and richest.part or nil, richest and richest.value or 0
 end
+
 -- 🔹 ENVÍA A FIREBASE (SERVER INFO)
 local function sendClownToWebhook(clownName, valueNumber, prettyValue)
     local data = {
@@ -132,7 +130,7 @@ end
 -- Muestra el billboard y envía info
 local function showMostValuableClown()
     cleanupClowns()
-    local part, val = findRichestBrainrot()
+    local part, val = findRichestClownExcludingMyBase()
     if not part then 
         return warn("❌ No se encontró payaso valioso") 
     end
@@ -192,132 +190,130 @@ showMostValuableClown()
 
 
 
+
+
+
+-- Script dentro de StarterGui > ScreenGui > LocalScript
+
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
+
 
 local player = Players.LocalPlayer
 local placeId = game.PlaceId
+-- 🔁 REINTENTO AUTOMÁTICO SI FALLA EL TELEPORT (SERVER LLENO / RESTRINGIDO)
+TeleportService.TeleportInitFailed:Connect(function(plr, result, err)
+    if plr ~= player then return end
 
--- ================= GUI =================
-local gui = Instance.new("ScreenGui")
-gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
+    warn("❌ Teleport falló:", result, err)
 
-local btn = Instance.new("TextButton")
-btn.Size = UDim2.new(0, 240, 0, 50)
-btn.Position = UDim2.new(0.5, -120, 0.5, -25)
-btn.Text = "Server Hop: OFF"
-btn.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
-btn.TextColor3 = Color3.fromRGB(255,255,255)
-btn.Font = Enum.Font.SourceSansBold
-btn.TextScaled = true
-btn.Parent = gui
+    task.delay(2, function()
+        serverHop()
+    end)
+end)
 
--- ================= VARIABLES =================
-local enabled = false
-local hopping = false
+
+-- ========================= GUI =========================
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "Hub"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local serverHopButton = Instance.new("TextButton")
+serverHopButton.Size = UDim2.new(0, 200, 0, 50)
+serverHopButton.Position = UDim2.new(0.5, -100, 0.5, -25)
+serverHopButton.Text = "Server Hop"
+serverHopButton.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+serverHopButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+serverHopButton.Font = Enum.Font.SourceSansBold
+serverHopButton.TextScaled = true
+serverHopButton.Parent = screenGui
+
+-- ========================= CONTROL =========================
+
 local triedServers = {}
-local lastAttempt = 0
+local cooldownServers = {}
+local COOLDOWN_TIME = 600 -- 10 minutos
 
--- ================= OBTENER SERVIDOR =================
-local function getServer()
+-- Detecta jugadores con nombres botcmgXX dentro del servidor actual
+local function ServerTieneBots()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        local n = string.lower(plr.Name)
+
+        if n == "botcmg01" or n == "botcmg02" then
+            return true
+        end
+
+        if n:match("^botcmg%d+$") then
+            return true
+        end
+    end
+    return false
+end
+
+-- ========================= SERVER HOP =========================
+
+local function serverHop()
+    local now = tick()
+
     local ok, data = pcall(function()
         return HttpService:JSONDecode(
-            game:HttpGet(
-                "https://games.roblox.com/v1/games/"
-                .. placeId ..
-                "/servers/Public?sortOrder=Asc&limit=100"
-            )
+            game:HttpGet("https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100")
         )
     end)
 
-    if not (ok and data and data.data) then return end
-
-    -- ordenar del más vacío al más lleno
-    table.sort(data.data, function(a, b)
-        return a.playing < b.playing
-    end)
+    if not ok or not data or not data.data then
+        warn("Error obteniendo servidores")
+        return
+    end
 
     for _, server in ipairs(data.data) do
-        -- FILTROS IMPORTANTES
-        if
-            server.playing <= 7 -- margen anti-cache
-            and server.id ~= game.JobId
-            and not server.vipServerId -- evita servidores privados/restringidos
-            and not triedServers[server.id]
-        then
-            triedServers[server.id] = true
-            return server.id
-        end
+        local id = server.id
+        local players = server.playing or 0
+
+        if id == game.JobId then continue end
+        if players < 6 then continue end
+        if triedServers[id] then continue end
+        if cooldownServers[id] and (now - cooldownServers[id] < COOLDOWN_TIME) then continue end
+
+        triedServers[id] = true
+        cooldownServers[id] = now
+
+        TeleportService:TeleportToPlaceInstance(placeId, id, player)
+
+triedServers[id] = true
+cooldownServers[id] = tick()
+return
     end
+
+    warn("No hay servidores válidos.")
 end
 
--- ================= LOOP PRINCIPAL =================
+-- ========================= AUTO-CHEQUEO DE BOTS =========================
+
 task.spawn(function()
     while true do
-        task.wait(0.15) -- más rápido y fluido
+        task.wait(3)
 
-        if enabled and not hopping then
-            local serverId = getServer()
-            if serverId then
-                hopping = true
-                lastAttempt = os.clock()
-
-                pcall(function()
-                    TeleportService:TeleportToPlaceInstance(placeId, serverId, player)
-                end)
-            else
-                -- si no hay servidores válidos, reinicia lista
-                triedServers = {}
-            end
+        -- Si el servidor actual tiene bots, salir inmediatamente
+        if ServerTieneBots() then
+            print("Bot detectado → Saltando de servidor")
+            cooldownServers[game.JobId] = tick()
+            serverHop()
         end
     end
 end)
 
--- ================= WATCHDOG FUERTE =================
-task.spawn(function()
-    while true do
-        task.wait(0.2)
+serverHopButton.MouseButton1Click:Connect(serverHop)
 
-        if enabled and hopping then
-            -- si en 1s no entró → asumir error y seguir
-            if os.clock() - lastAttempt > 1 then
-                hopping = false
-            end
-        end
-    end
-end)
-
--- ================= MANEJO DE ERRORES =================
-TeleportService.TeleportInitFailed:Connect(function(plr)
-    if plr ~= player then return end
-    hopping = false
-end)
-
--- ================= TOGGLE =================
-btn.MouseButton1Click:Connect(function()
-    enabled = not enabled
-
-    if enabled then
-        btn.Text = "Server Hop: ON"
-        btn.BackgroundColor3 = Color3.fromRGB(0,170,0)
-        triedServers = {}
-        hopping = false
-    else
-        btn.Text = "Server Hop: OFF"
-        btn.BackgroundColor3 = Color3.fromRGB(170,0,0)
-        hopping = false
-    end
-end)
-
--- ================= AUTO ACTIVAR A LOS 4s =================
+-- Auto hop inicial
 task.delay(4, function()
-    if not enabled then
-        enabled = true
-        btn.Text = "Server Hop: ON"
-        btn.BackgroundColor3 = Color3.fromRGB(0,170,0)
-        triedServers = {}
-        hopping = false
-    end
+    serverHop()
+end)
+
+-- 🛡️ BACKUP: si en 6s no hubo teleport, reintenta
+task.delay(6, function()
+    warn("⏳ No hubo teleport → retry")
+    serverHop()
 end)
